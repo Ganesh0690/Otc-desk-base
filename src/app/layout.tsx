@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
 import "./globals.css";
-
-const APP_URL = process.env.NEXT_PUBLIC_URL || "https://otc-desk.vercel.app";
-
+const APP_URL = process.env.NEXT_PUBLIC_URL || "https://otc-desk-base.vercel.app";
 export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "OTC Desk - P2P Token Swaps on Base",
@@ -14,6 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
       images: [`${APP_URL}/og.png`],
     },
     other: {
+      "base:app_id": "69a1c5d0dce51e894f9727c8",
       "fc:miniapp": JSON.stringify({
         version: "next",
         imageUrl: `${APP_URL}/og.png`,
@@ -31,7 +30,6 @@ export async function generateMetadata(): Promise<Metadata> {
     },
   };
 }
-
 export default function RootLayout({
   children,
 }: {
