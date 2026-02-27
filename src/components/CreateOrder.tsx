@@ -1,34 +1,26 @@
 "use client";
-
 import { useState, useCallback } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from "wagmi";
-import { parseUnits, maxUint256 } from "viem";
+import { useAccount, useWriteContract, useSendTransaction, usePublicClient } from "wagmi";
+import { parseUnits, maxUint256, encodeFunctionData } from "viem";
 import { OTC_ABI, ERC20_ABI } from "@/lib/abi";
 import { OTC_CONTRACT_ADDRESS } from "@/lib/contracts";
 import { TOKENS, TokenInfo, getTokenAddress, ZERO_ADDRESS } from "@/lib/tokens";
 import { TokenSelector } from "./TokenSelector";
-
+import { DATA_SUFFIX } from "@/lib/attribution";
 type Props = {
   onOrderCreated: () => void;
 };
-
 export function CreateOrder({ onOrderCreated }: Props) {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
-
+  const { sendTransactionAsync } = useSendTransaction();
   const [sellToken, setSellToken] = useState<TokenInfo>(TOKENS.ETH);
   const [buyToken, setBuyToken] = useState<TokenInfo>(TOKENS.USDC);
   const [sellAmount, setSellAmount] = useState("");
   const [buyAmount, setBuyAmount] = useState("");
   const [status, setStatus] = useState<"idle" | "approving" | "creating" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
-
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
-
   const swapTokens = useCallback(() => {
     const tmpToken = sellToken;
     const tmpAmount = sellAmount;
@@ -37,21 +29,17 @@ export function CreateOrder({ onOrderCreated }: Props) {
     setSellAmount(buyAmount);
     setBuyAmount(tmpAmount);
   }, [sellToken, buyToken, sellAmount, buyAmount]);
-
   const handleCreate = useCallback(async () => {
     if (!address || !publicClient) return;
     if (!sellAmount || !buyAmount) return;
-
     setStatus("creating");
     setErrorMsg("");
-
     try {
       const sellAmountParsed = parseUnits(sellAmount, sellToken.decimals);
       const buyAmountParsed = parseUnits(buyAmount, buyToken.decimals);
       const sellAddr = getTokenAddress(sellToken);
       const buyAddr = getTokenAddress(buyToken);
       const isETHSell = sellAddr === ZERO_ADDRESS;
-
       if (!isETHSell) {
         setStatus("approving");
         const allowance = await publicClient.readContract({
@@ -60,7 +48,6 @@ export function CreateOrder({ onOrderCreated }: Props) {
           functionName: "allowance",
           args: [address, OTC_CONTRACT_ADDRESS],
         });
-
         if (allowance < sellAmountParsed) {
           const approveTx = await writeContractAsync({
             address: sellAddr,
@@ -72,41 +59,37 @@ export function CreateOrder({ onOrderCreated }: Props) {
         }
         setStatus("creating");
       }
-
-      const hash = await writeContractAsync({
-        address: OTC_CONTRACT_ADDRESS,
+      const calldata = encodeFunctionData({
         abi: OTC_ABI,
         functionName: "createOrder",
         args: [sellAddr, buyAddr, sellAmountParsed, buyAmountParsed],
+      });
+      const hash = await sendTransactionAsync({
+        to: OTC_CONTRACT_ADDRESS,
+        data: (calldata + DATA_SUFFIX.slice(2)) as `0x${string}`,
         value: isETHSell ? sellAmountParsed : BigInt(0),
       });
-
-      setTxHash(hash);
       await publicClient.waitForTransactionReceipt({ hash });
       setStatus("success");
       setSellAmount("");
       setBuyAmount("");
       onOrderCreated();
-
       setTimeout(() => setStatus("idle"), 3000);
     } catch (e: any) {
       setStatus("error");
       setErrorMsg(e?.shortMessage || e?.message || "Transaction failed");
       setTimeout(() => setStatus("idle"), 4000);
     }
-  }, [address, publicClient, sellAmount, buyAmount, sellToken, buyToken, writeContractAsync, onOrderCreated]);
-
+  }, [address, publicClient, sellAmount, buyAmount, sellToken, buyToken, writeContractAsync, sendTransactionAsync, onOrderCreated]);
   const rate = sellAmount && buyAmount && parseFloat(sellAmount) > 0
     ? (parseFloat(buyAmount) / parseFloat(sellAmount)).toFixed(4)
     : null;
-
   return (
     <div className="glass-panel rounded-2xl overflow-hidden">
       <div className="px-6 py-4 border-b border-white/[0.04]">
         <h2 className="font-display font-bold text-white text-base">Create Order</h2>
         <p className="text-xs text-muted mt-0.5">Deposit tokens into escrow to create a trade</p>
       </div>
-
       <div className="p-6 space-y-4">
         <div>
           <label className="text-[11px] text-muted font-mono uppercase tracking-wider mb-2 block">
@@ -127,7 +110,6 @@ export function CreateOrder({ onOrderCreated }: Props) {
             />
           </div>
         </div>
-
         <div className="flex justify-center">
           <button
             type="button"
@@ -144,7 +126,6 @@ export function CreateOrder({ onOrderCreated }: Props) {
             </svg>
           </button>
         </div>
-
         <div>
           <label className="text-[11px] text-muted font-mono uppercase tracking-wider mb-2 block">
             You Receive
@@ -164,7 +145,6 @@ export function CreateOrder({ onOrderCreated }: Props) {
             />
           </div>
         </div>
-
         {rate && (
           <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-surface-2 border border-white/[0.04]">
             <span className="text-xs text-muted">Rate</span>
@@ -173,19 +153,16 @@ export function CreateOrder({ onOrderCreated }: Props) {
             </span>
           </div>
         )}
-
         {status === "error" && (
           <div className="px-4 py-2.5 rounded-xl bg-danger/5 border border-danger/10">
             <p className="text-xs text-danger font-mono">{errorMsg}</p>
           </div>
         )}
-
         {status === "success" && (
           <div className="px-4 py-2.5 rounded-xl bg-accent/5 border border-accent/10">
             <p className="text-xs text-accent font-mono">Order created successfully</p>
           </div>
         )}
-
         <button
           onClick={handleCreate}
           disabled={!isConnected || !sellAmount || !buyAmount || status === "approving" || status === "creating"}
@@ -195,11 +172,10 @@ export function CreateOrder({ onOrderCreated }: Props) {
             ? "Connect Wallet"
             : status === "approving"
             ? "Approving..."
-            : status === "creating" || isConfirming
+            : status === "creating"
             ? "Creating Order..."
             : "Create Order"}
         </button>
-
         <p className="text-center text-[10px] text-muted/60 font-mono">
           Taker pays 0.75% fee on fill
         </p>

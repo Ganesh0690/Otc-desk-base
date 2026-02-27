@@ -1,40 +1,35 @@
 "use client";
-
 import { useState, useCallback } from "react";
-import { useAccount, useReadContract, useWriteContract, usePublicClient } from "wagmi";
-import { maxUint256 } from "viem";
+import { useAccount, useReadContract, useWriteContract, useSendTransaction, usePublicClient } from "wagmi";
+import { maxUint256, encodeFunctionData } from "viem";
 import { OTC_ABI, ERC20_ABI } from "@/lib/abi";
 import { OTC_CONTRACT_ADDRESS, formatAddress, timeAgo, calculateFee } from "@/lib/contracts";
 import { getTokenByAddress, formatTokenAmount, ZERO_ADDRESS } from "@/lib/tokens";
-
+import { DATA_SUFFIX } from "@/lib/attribution";
 type Props = {
   refreshKey: number;
 };
-
 export function OrderBook({ refreshKey }: Props) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const { sendTransactionAsync } = useSendTransaction();
   const [actionId, setActionId] = useState<number | null>(null);
   const [actionType, setActionType] = useState<"fill" | "cancel" | null>(null);
-
   const { data: orders, refetch } = useReadContract({
     address: OTC_CONTRACT_ADDRESS,
     abi: OTC_ABI,
     functionName: "getActiveOrders",
   });
-
   const handleFill = useCallback(
     async (orderId: number, buyTokenAddr: string, buyAmount: bigint) => {
       if (!address || !publicClient) return;
       setActionId(orderId);
       setActionType("fill");
-
       try {
         const fee = calculateFee(buyAmount);
         const totalRequired = buyAmount + fee;
         const isETHBuy = buyTokenAddr === ZERO_ADDRESS;
-
         if (!isETHBuy) {
           const allowance = await publicClient.readContract({
             address: buyTokenAddr as `0x${string}`,
@@ -42,7 +37,6 @@ export function OrderBook({ refreshKey }: Props) {
             functionName: "allowance",
             args: [address, OTC_CONTRACT_ADDRESS],
           });
-
           if (allowance < totalRequired) {
             const approveTx = await writeContractAsync({
               address: buyTokenAddr as `0x${string}`,
@@ -53,15 +47,16 @@ export function OrderBook({ refreshKey }: Props) {
             await publicClient.waitForTransactionReceipt({ hash: approveTx });
           }
         }
-
-        const hash = await writeContractAsync({
-          address: OTC_CONTRACT_ADDRESS,
+        const calldata = encodeFunctionData({
           abi: OTC_ABI,
           functionName: "fillOrder",
           args: [BigInt(orderId)],
+        });
+        const hash = await sendTransactionAsync({
+          to: OTC_CONTRACT_ADDRESS,
+          data: (calldata + DATA_SUFFIX.slice(2)) as `0x${string}`,
           value: isETHBuy ? totalRequired : BigInt(0),
         });
-
         await publicClient.waitForTransactionReceipt({ hash });
         refetch();
       } catch (e: any) {
@@ -71,21 +66,22 @@ export function OrderBook({ refreshKey }: Props) {
         setActionType(null);
       }
     },
-    [address, publicClient, writeContractAsync, refetch]
+    [address, publicClient, writeContractAsync, sendTransactionAsync, refetch]
   );
-
   const handleCancel = useCallback(
     async (orderId: number) => {
       if (!address || !publicClient) return;
       setActionId(orderId);
       setActionType("cancel");
-
       try {
-        const hash = await writeContractAsync({
-          address: OTC_CONTRACT_ADDRESS,
+        const calldata = encodeFunctionData({
           abi: OTC_ABI,
           functionName: "cancelOrder",
           args: [BigInt(orderId)],
+        });
+        const hash = await sendTransactionAsync({
+          to: OTC_CONTRACT_ADDRESS,
+          data: (calldata + DATA_SUFFIX.slice(2)) as `0x${string}`,
         });
         await publicClient.waitForTransactionReceipt({ hash });
         refetch();
@@ -96,11 +92,9 @@ export function OrderBook({ refreshKey }: Props) {
         setActionType(null);
       }
     },
-    [address, publicClient, writeContractAsync, refetch]
+    [address, publicClient, sendTransactionAsync, refetch]
   );
-
   const orderList = orders as any[] || [];
-
   return (
     <div className="glass-panel rounded-2xl overflow-hidden">
       <div className="px-6 py-4 border-b border-white/[0.04] flex items-center justify-between">
@@ -126,7 +120,6 @@ export function OrderBook({ refreshKey }: Props) {
           </svg>
         </button>
       </div>
-
       {orderList.length === 0 ? (
         <div className="p-12 text-center">
           <div className="w-12 h-12 rounded-2xl bg-surface-3 border border-white/[0.04] flex items-center justify-center mx-auto mb-4">
@@ -153,12 +146,10 @@ export function OrderBook({ refreshKey }: Props) {
             const isMaker = address?.toLowerCase() === order.maker?.toLowerCase();
             const created = Number(order.createdAt);
             const isActioning = actionId === id;
-
             return (
               <div
                 key={id}
                 className="px-6 py-4 hover:bg-white/[0.01] transition-colors animate-slide-up"
-                style={{ animationDelay: `${id * 50}ms` }}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -173,7 +164,6 @@ export function OrderBook({ refreshKey }: Props) {
                         {timeAgo(created)}
                       </span>
                     </div>
-
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <span className="text-sm font-mono font-medium text-white">{sellAmt}</span>
@@ -187,12 +177,10 @@ export function OrderBook({ refreshKey }: Props) {
                         <span className="text-xs font-mono text-muted">{buySymbol}</span>
                       </div>
                     </div>
-
                     <p className="text-[10px] text-muted/40 font-mono mt-1.5">
                       by {formatAddress(order.maker)}
                     </p>
                   </div>
-
                   <div className="shrink-0">
                     {isMaker ? (
                       <button
